@@ -1,6 +1,8 @@
 # WebGPU Sorting Comparison
 
-A hardware compatibility testing tool for WebGPU sorting implementations. Deployed via GitHub Pages to enable quick browser-based testing across different GPU vendors (M1, Intel, AMD, Nvidia) without local setup.
+
+
+A hardware compatibility testing tool for WebGPU sorting implementations. Deployed via GitHub Pages to enable quick browser-based testing across different GPU vendors (Apple, Intel, AMD, Nvidia) without local setup. [**Try it live on GitHub Pages**](https://metarapi.github.io/webgpu-sorting/)
 
 ## Purpose
 
