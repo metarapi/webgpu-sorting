@@ -208,37 +208,43 @@ function displayResults(results, arraySize) {
   const times = Object.values(results).map(r => r.time);
   const fastest = Math.min(...times);
 
+  // Define baseline - use JavaScript as the reference point
+  const baseline = results.javascript ? results.javascript.time : fastest;
+
   // Display each algorithm's results
   if (results.javascript) {
-    const speedup = fastest / results.javascript.time;
+    const speedup = baseline / results.javascript.time;
     html += createResultRow(
       'JavaScript Array.sort',
       results.javascript.time,
       results.javascript.valid.isSorted,
       speedup,
-      '#60a5fa'
+      '#60a5fa',
+      fastest
     );
   }
 
   if (results.fidelityfx) {
-    const speedup = fastest / results.fidelityfx.time;
+    const speedup = baseline / results.fidelityfx.time;
     html += createResultRow(
       'FidelityFX Radix Sort',
       results.fidelityfx.time,
       results.fidelityfx.valid.isSorted,
       speedup,
-      '#4ade80'
+      '#4ade80',
+      fastest
     );
   }
 
   if (results.deviceradix) {
-    const speedup = fastest / results.deviceradix.time;
+    const speedup = baseline / results.deviceradix.time;
     html += createResultRow(
       'DeviceRadixSort',
       results.deviceradix.time,
       results.deviceradix.valid.isSorted,
       speedup,
-      '#f472b6'
+      '#f472b6',
+      fastest
     );
   }
 
@@ -263,10 +269,10 @@ function displayResults(results, arraySize) {
   resultsEl.innerHTML = html;
 }
 
-function createResultRow(name, time, valid, speedup, color) {
+function createResultRow(name, time, valid, speedup, color, fastest) {
   const validIcon = valid ? '✓' : '✗';
   const validColor = valid ? 'text-green-400' : 'text-red-400';
-  const isFastest = speedup >= 0.99;
+  const isFastest = Math.abs(time - fastest) < 0.01;  // Check time, not speedup
   
   return `
     <div class="mb-3 p-3 bg-gray-900 rounded-lg">
@@ -280,7 +286,7 @@ function createResultRow(name, time, valid, speedup, color) {
       </div>
       <div class="ml-5 mt-2 space-y-1 text-sm">
         <p><span class="text-gray-400">Time:</span> ${formatTime(time)}</p>
-        ${!isFastest ? `<p><span class="text-gray-400">Speedup:</span> ${speedup.toFixed(2)}×</p>` : ''}
+        <p><span class="text-gray-400">Speedup:</span> ${speedup.toFixed(2)}×</p>
       </div>
     </div>
   `;
