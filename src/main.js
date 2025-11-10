@@ -90,6 +90,14 @@ async function initWebGPU() {
       return false;
     }
 
+    // Check for workgroup storage size support
+    const limits = adapter.limits;
+    const requiredWorkgroupStorage = 32768;
+    if (limits.maxComputeWorkgroupStorageSize < requiredWorkgroupStorage) {
+      statusEl.innerHTML = `<p class="text-sm text-red-400">❌ Insufficient workgroup storage: ${limits.maxComputeWorkgroupStorageSize} bytes (need ${requiredWorkgroupStorage} bytes)</p>`;
+      return false;
+    }
+
     // Request device with necessary features
     const features = ['subgroups'];
     if (adapter.features.has('timestamp-query')) {
@@ -97,7 +105,10 @@ async function initWebGPU() {
     }
 
     device = await adapter.requestDevice({
-      requiredFeatures: features
+      requiredFeatures: features,
+      requiredLimits: {
+        maxComputeWorkgroupStorageSize: requiredWorkgroupStorage
+      }
     });
 
     // Initialize sorting algorithms
