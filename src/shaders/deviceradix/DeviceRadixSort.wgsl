@@ -60,7 +60,7 @@ var<storage, read_write> pass_hist: array<u32>;
 var<storage, read_write> err: array<u32>;
 
 const BLOCK_DIM = 256u;
-const MIN_SUBGROUP_SIZE = 4u;
+const MIN_SUBGROUP_SIZE = 16u;
 const MAX_REDUCE_SIZE = BLOCK_DIM / MIN_SUBGROUP_SIZE;
 
 const RADIX = 256u;
@@ -73,8 +73,11 @@ const PART_SIZE = KEYS_PER_THREAD * BLOCK_DIM;
 const REDUCE_BLOCK_DIM = 128u;
 const REDUCE_KEYS_PER_THREAD = 30u;
 // const REDUCE_HIST_SIZE = REDUCE_BLOCK_DIM / 64u * RADIX;
-const REDUCE_HIST_SIZE = REDUCE_BLOCK_DIM / MIN_SUBGROUP_SIZE * RADIX; // Over-allocate for safety
+const REDUCE_HIST_SIZE = REDUCE_BLOCK_DIM / MIN_SUBGROUP_SIZE * RADIX; // Sized for MIN_SUBGROUP_SIZE
 const REDUCE_PART_SIZE = REDUCE_KEYS_PER_THREAD * REDUCE_BLOCK_DIM;
+
+const MAX_SUBGROUPS_PER_BLOCK = BLOCK_DIM / MIN_SUBGROUP_SIZE;
+const WARP_HIST_CAPACITY = MAX_SUBGROUPS_PER_BLOCK * RADIX;
 
 var<workgroup> wg_globalHist: array<atomic<u32>, REDUCE_HIST_SIZE>;
 
@@ -85,6 +88,13 @@ fn reduce_hist(
     @builtin(subgroup_size) lane_count: u32,
     @builtin(workgroup_id) wgid: vec3<u32>) {
 
+    if (lane_count < MIN_SUBGROUP_SIZE || (REDUCE_BLOCK_DIM % lane_count) != 0u) {
+        if (threadid.x == 0u) {
+            err[0u] = 0xDEAD0001u;
+        }
+        return;
+    }
+
     let sid = threadid.x / lane_count;
 
     for (var i = threadid.x; i < REDUCE_HIST_SIZE; i += REDUCE_BLOCK_DIM) {
@@ -93,8 +103,8 @@ fn reduce_hist(
     workgroupBarrier();
 
     let radix_shift = info.shift;
-    // let hist_offset = threadid.x / 64u * RADIX; // I think this was for wave64
     let hist_offset = sid * RADIX;
+    //let hist_offset = sid * RADIX;
     {
         var i = threadid.x + wgid.x * REDUCE_PART_SIZE;
         if(wgid.x < info.thread_blocks - 1) {
@@ -117,13 +127,20 @@ fn reduce_hist(
     }
     workgroupBarrier();
 
+    let subgroup_histograms = REDUCE_BLOCK_DIM / lane_count;
     let lane_mask = lane_count - 1u;
     let circular_lane_shift = (laneid + lane_mask) & lane_mask;
     for (var i = threadid.x; i < RADIX; i += REDUCE_BLOCK_DIM) {
-        let add_val = atomicLoad(&wg_globalHist[i + RADIX]);
-        atomicAdd(&wg_globalHist[i], add_val);
-        pass_hist[wgid.x + i * info.thread_blocks] = atomicLoad(&wg_globalHist[i]);
-        let t = unsafeSubgroupInclusiveAdd(atomicLoad(&wg_globalHist[i]));
+        var reduction = atomicLoad(&wg_globalHist[i]);
+        var idx = i + RADIX;
+        for (var h = 1u; h < subgroup_histograms; h += 1u) {
+            let val = atomicLoad(&wg_globalHist[idx]);
+            reduction += val;
+            atomicStore(&wg_globalHist[idx], reduction - val);
+            idx += RADIX;
+        }
+        pass_hist[wgid.x + i * info.thread_blocks] = reduction;
+        let t = unsafeSubgroupInclusiveAdd(reduction);
         atomicStore(&wg_globalHist[i], unsafeSubgroupShuffle(t, circular_lane_shift));
     }
     workgroupBarrier();
@@ -155,6 +172,13 @@ fn scan(
     @builtin(subgroup_size) lane_count: u32,
     @builtin(workgroup_id) wgid: vec3<u32>) {
     
+    if (lane_count < MIN_SUBGROUP_SIZE || (BLOCK_DIM % lane_count) != 0u) {
+        if (threadid.x == 0u) {
+            err[1u] = 0xDEAD0002u;
+        }
+        return;
+    }
+
     let sid = threadid.x / lane_count;
     let radix_offset = wgid.x * info.thread_blocks;
     let lane_log = u32(countTrailingZeros(lane_count));
@@ -233,7 +257,8 @@ fn scan(
     }
 }    
 
-var<workgroup> wg_warpHist: array<atomic<u32>, PART_SIZE>;
+// var<workgroup> wg_warpHist: array<atomic<u32>, PART_SIZE>;
+var<workgroup> wg_warpHist: array<atomic<u32>, WARP_HIST_CAPACITY>;
 var<workgroup> wg_localHist: array<u32, RADIX>;
 
 fn WLMS(key: u32, shift: u32, laneid: u32, lane_count: u32, lane_mask_lt: u32, s_offset: u32) -> u32 {
@@ -264,7 +289,14 @@ fn dvr_pass(
     
     let sid = threadid.x / lane_count;
 
-    let warp_hists_size = clamp(BLOCK_DIM / lane_count * RADIX, 0u, PART_SIZE);
+    let warp_hists_size = (BLOCK_DIM / lane_count) * RADIX;
+    if (warp_hists_size > WARP_HIST_CAPACITY) {
+        if (threadid.x == 0u) {
+            err[2u] = 0xDEAD0004u;
+        }
+        return;
+    }
+    // let warp_hists_size = clamp(BLOCK_DIM / lane_count * RADIX, 0u, PART_SIZE);
     for (var i = threadid.x; i < warp_hists_size; i += BLOCK_DIM) {
         atomicStore(&wg_warpHist[i], 0u);
     }
