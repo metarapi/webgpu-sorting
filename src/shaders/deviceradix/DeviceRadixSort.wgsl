@@ -72,7 +72,8 @@ const PART_SIZE = KEYS_PER_THREAD * BLOCK_DIM;
 
 const REDUCE_BLOCK_DIM = 128u;
 const REDUCE_KEYS_PER_THREAD = 30u;
-const REDUCE_HIST_SIZE = REDUCE_BLOCK_DIM / 64u * RADIX;
+// const REDUCE_HIST_SIZE = REDUCE_BLOCK_DIM / 64u * RADIX;
+const REDUCE_HIST_SIZE = REDUCE_BLOCK_DIM / MIN_SUBGROUP_SIZE * RADIX; // Over-allocate for safety
 const REDUCE_PART_SIZE = REDUCE_KEYS_PER_THREAD * REDUCE_BLOCK_DIM;
 
 var<workgroup> wg_globalHist: array<atomic<u32>, REDUCE_HIST_SIZE>;
@@ -92,7 +93,8 @@ fn reduce_hist(
     workgroupBarrier();
 
     let radix_shift = info.shift;
-    let hist_offset = threadid.x / 64u * RADIX;
+    // let hist_offset = threadid.x / 64u * RADIX; // I think this was for wave64
+    let hist_offset = sid * RADIX;
     {
         var i = threadid.x + wgid.x * REDUCE_PART_SIZE;
         if(wgid.x < info.thread_blocks - 1) {
