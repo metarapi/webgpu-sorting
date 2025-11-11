@@ -57,7 +57,7 @@ var<storage, read_write> hist: array<atomic<u32>>;
 var<storage, read_write> pass_hist: array<u32>;
 
 @group(0) @binding(8)
-var<storage, read_write> err: array<u32>;
+var<storage, read_write> status: array<u32>;
 
 const BLOCK_DIM = 256u;
 const MIN_SUBGROUP_SIZE = 16u;
@@ -79,6 +79,11 @@ const REDUCE_PART_SIZE = REDUCE_KEYS_PER_THREAD * REDUCE_BLOCK_DIM;
 const MAX_SUBGROUPS_PER_BLOCK = BLOCK_DIM / MIN_SUBGROUP_SIZE;
 const WARP_HIST_CAPACITY = MAX_SUBGROUPS_PER_BLOCK * RADIX;
 
+const STATUS_ERR_REDUCE = 0u;
+const STATUS_ERR_SCAN = 1u;
+const STATUS_ERR_DVR = 2u;
+const STATUS_SUBGROUP_BASE = 3u;
+
 var<workgroup> wg_globalHist: array<atomic<u32>, REDUCE_HIST_SIZE>;
 
 @compute @workgroup_size(REDUCE_BLOCK_DIM, 1, 1)
@@ -90,9 +95,13 @@ fn reduce_hist(
 
     if (lane_count < MIN_SUBGROUP_SIZE || (REDUCE_BLOCK_DIM % lane_count) != 0u) {
         if (threadid.x == 0u) {
-            err[0u] = 0xDEAD0001u;
+            status[STATUS_ERR_REDUCE] = 0xDEAD0001u;
         }
         return;
+    }
+
+    if (wgid.x == 0u && threadid.x == 0u) {
+        status[STATUS_SUBGROUP_BASE + info.shift / RADIX_LOG] = lane_count;
     }
 
     let sid = threadid.x / lane_count;
@@ -174,9 +183,13 @@ fn scan(
     
     if (lane_count < MIN_SUBGROUP_SIZE || (BLOCK_DIM % lane_count) != 0u) {
         if (threadid.x == 0u) {
-            err[1u] = 0xDEAD0002u;
+            status[STATUS_ERR_SCAN] = 0xDEAD0002u;
         }
         return;
+    }
+
+    if (wgid.x == 0u && threadid.x == 0u) {
+        status[STATUS_SUBGROUP_BASE + info.shift / RADIX_LOG] = lane_count;
     }
 
     let sid = threadid.x / lane_count;
@@ -292,9 +305,13 @@ fn dvr_pass(
     let warp_hists_size = (BLOCK_DIM / lane_count) * RADIX;
     if (warp_hists_size > WARP_HIST_CAPACITY) {
         if (threadid.x == 0u) {
-            err[2u] = 0xDEAD0004u;
+            status[STATUS_ERR_DVR] = 0xDEAD0004u;
         }
         return;
+    }
+
+    if (wgid.x == 0u && threadid.x == 0u) {
+        status[STATUS_SUBGROUP_BASE + info.shift / RADIX_LOG] = lane_count;
     }
     // let warp_hists_size = clamp(BLOCK_DIM / lane_count * RADIX, 0u, PART_SIZE);
     for (var i = threadid.x; i < warp_hists_size; i += BLOCK_DIM) {

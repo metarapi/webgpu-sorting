@@ -192,11 +192,12 @@ async function runSortingTest(mode, arraySize) {
 
     // Run DeviceRadixSort
     if (mode === 'all' || mode === 'deviceradix') {
-      const { sorted, gpuTime } = await deviceRadixSort.sort(data);
+      const { sorted, gpuTime, subgroupSize } = await deviceRadixSort.sort(data);
       results.deviceradix = {
         time: gpuTime,
         sorted,
-        valid: validateSort(sorted)
+        valid: validateSort(sorted),
+        subgroupSize
       };
     }
 
@@ -255,7 +256,8 @@ function displayResults(results, arraySize) {
       results.deviceradix.valid.isSorted,
       speedup,
       '#f472b6',
-      fastest
+      fastest,
+      results.deviceradix.subgroupSize ? [{ label: 'Subgroup size', value: `${formatNumber(results.deviceradix.subgroupSize)} lanes` }] : []
     );
   }
 
@@ -280,10 +282,11 @@ function displayResults(results, arraySize) {
   resultsEl.innerHTML = html;
 }
 
-function createResultRow(name, time, valid, speedup, color, fastest) {
+function createResultRow(name, time, valid, speedup, color, fastest, extra = []) {
   const validIcon = valid ? '✓' : '✗';
   const validColor = valid ? 'text-green-400' : 'text-red-400';
   const isFastest = Math.abs(time - fastest) < 0.01;  // Check time, not speedup
+  const extraContent = extra.map(({ label, value }) => `<p><span class="text-gray-400">${label}:</span> ${value}</p>`).join('');
   
   return `
     <div class="mb-3 p-3 bg-gray-900 rounded-lg">
@@ -298,6 +301,7 @@ function createResultRow(name, time, valid, speedup, color, fastest) {
       <div class="ml-5 mt-2 space-y-1 text-sm">
         <p><span class="text-gray-400">Time:</span> ${formatTime(time)}</p>
         <p><span class="text-gray-400">Speedup:</span> ${speedup.toFixed(2)}×</p>
+        ${extraContent}
       </div>
     </div>
   `;

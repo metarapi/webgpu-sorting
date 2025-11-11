@@ -15,6 +15,8 @@ export class DeviceRadixSort {
   static REDUCE_BLOCK_DIM = 128;
   static REDUCE_KEYS_PER_THREAD = 30;
   static REDUCE_PART_SIZE = DeviceRadixSort.REDUCE_BLOCK_DIM * DeviceRadixSort.REDUCE_KEYS_PER_THREAD;
+  static STATUS_ERROR_COUNT = 3; // Keep in sync with STATUS_ERR_* constants in the shader
+  static STATUS_LENGTH = DeviceRadixSort.STATUS_ERROR_COUNT + DeviceRadixSort.SORT_PASSES;
 
   constructor(device, maxKeys) {
     this.device = device;
@@ -110,8 +112,8 @@ export class DeviceRadixSort {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
     });
 
-    this.errBuffer = this.device.createBuffer({
-      size: 4,
+    this.statusBuffer = this.device.createBuffer({
+      size: DeviceRadixSort.STATUS_LENGTH * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
     });
 
@@ -157,7 +159,11 @@ export class DeviceRadixSort {
     // Clear buffers
     const zeros = new Uint32Array(DeviceRadixSort.RADIX * DeviceRadixSort.SORT_PASSES).fill(0);
     this.device.queue.writeBuffer(this.histBuffer, 0, zeros);
-  this.device.queue.writeBuffer(this.errBuffer, 0, new Uint32Array([0]));
+    this.device.queue.writeBuffer(
+      this.statusBuffer,
+      0,
+      new Uint32Array(DeviceRadixSort.STATUS_LENGTH).fill(0)
+    );
 
     const encoder = this.device.createCommandEncoder();
 
@@ -190,7 +196,7 @@ export class DeviceRadixSort {
           { binding: 5, resource: { buffer: this.altPayloadBuffer } },
           { binding: 6, resource: { buffer: this.histBuffer } },
           { binding: 7, resource: { buffer: this.passHistBuffer } },
-          { binding: 8, resource: { buffer: this.errBuffer } }
+          { binding: 8, resource: { buffer: this.statusBuffer } }
         ]
       });
 
@@ -250,9 +256,20 @@ export class DeviceRadixSort {
       this.readBuffer.unmap();
     }
 
-    // Check for errors emitted by compute passes
-    const errorData = await this.downloadBuffer(this.errBuffer, 4);
-    const errorCode = new Uint32Array(errorData)[0];
+    // Check for errors emitted by compute passes and gather stats
+    const statusData = await this.downloadBuffer(
+      this.statusBuffer,
+      DeviceRadixSort.STATUS_LENGTH * 4
+    );
+    const statusArray = new Uint32Array(statusData);
+
+    let errorCode = 0;
+    for (let i = 0; i < DeviceRadixSort.STATUS_ERROR_COUNT; i++) {
+      if (statusArray[i] !== 0) {
+        errorCode = statusArray[i];
+        break;
+      }
+    }
     if (errorCode !== 0) {
       const errorMessages = {
         0xDEAD0001: 'reduce_hist: subgroup size < MIN_SUBGROUP_SIZE or alignment issue',
@@ -269,12 +286,20 @@ export class DeviceRadixSort {
     const keysArray = new Uint32Array(resultKeys);
     const valuesArray = new Uint32Array(resultValues);
 
+    let subgroupSize = 0;
+    for (let i = DeviceRadixSort.STATUS_ERROR_COUNT; i < statusArray.length; i++) {
+      if (statusArray[i] !== 0) {
+        subgroupSize = statusArray[i];
+        break;
+      }
+    }
+
     const sorted = [];
     for (let i = 0; i < numKeys; i++) {
       sorted.push({ key: keysArray[i], value: valuesArray[i] });
     }
 
-    return { sorted, gpuTime };
+    return { sorted, gpuTime, subgroupSize };
   }
 
   async downloadBuffer(buffer, size) {
@@ -303,7 +328,7 @@ export class DeviceRadixSort {
     this.bumpBuffer?.destroy();
     this.histBuffer?.destroy();
     this.passHistBuffer?.destroy();
-    this.errBuffer?.destroy();
+    this.statusBuffer?.destroy();
     this.infoBuffer?.destroy();
     this.infoUploadBuffer?.destroy();
     this.querySet?.destroy();
