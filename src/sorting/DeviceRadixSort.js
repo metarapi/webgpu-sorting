@@ -157,6 +157,7 @@ export class DeviceRadixSort {
     // Clear buffers
     const zeros = new Uint32Array(DeviceRadixSort.RADIX * DeviceRadixSort.SORT_PASSES).fill(0);
     this.device.queue.writeBuffer(this.histBuffer, 0, zeros);
+  this.device.queue.writeBuffer(this.errBuffer, 0, new Uint32Array([0]));
 
     const encoder = this.device.createCommandEncoder();
 
@@ -247,6 +248,18 @@ export class DeviceRadixSort {
       const delta = Number(times[1] - times[0]);
       gpuTime = delta / 1_000_000; // Convert to milliseconds
       this.readBuffer.unmap();
+    }
+
+    // Check for errors emitted by compute passes
+    const errorData = await this.downloadBuffer(this.errBuffer, 4);
+    const errorCode = new Uint32Array(errorData)[0];
+    if (errorCode !== 0) {
+      const errorMessages = {
+        0xDEAD0001: 'reduce_hist: subgroup size < MIN_SUBGROUP_SIZE or alignment issue',
+        0xDEAD0002: 'scan: subgroup size < MIN_SUBGROUP_SIZE or alignment issue',
+        0xDEAD0004: 'dvr_pass: warp hist capacity exceeded'
+      };
+      throw new Error(`GPU Sort Error: ${errorMessages[errorCode] || `Unknown error code 0x${errorCode.toString(16)}`}`);
     }
 
     // Download results
