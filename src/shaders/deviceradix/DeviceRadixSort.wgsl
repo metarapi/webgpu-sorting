@@ -83,6 +83,10 @@ const STATUS_ERR_REDUCE = 0u;
 const STATUS_ERR_SCAN = 1u;
 const STATUS_ERR_DVR = 2u;
 const STATUS_SUBGROUP_BASE = 3u;
+const STATUS_SUBGROUP_STRIDE = 3u;
+const STATUS_STAGE_REDUCE = 0u;
+const STATUS_STAGE_SCAN = 1u;
+const STATUS_STAGE_DVR = 2u;
 
 var<workgroup> wg_globalHist: array<atomic<u32>, REDUCE_HIST_SIZE>;
 
@@ -101,7 +105,8 @@ fn reduce_hist(
     }
 
     if (wgid.x == 0u && threadid.x == 0u) {
-        status[STATUS_SUBGROUP_BASE + info.shift / RADIX_LOG] = lane_count;
+        let pass_idx = info.shift / RADIX_LOG;
+        status[STATUS_SUBGROUP_BASE + pass_idx * STATUS_SUBGROUP_STRIDE + STATUS_STAGE_REDUCE] = lane_count;
     }
 
     let sid = threadid.x / lane_count;
@@ -189,7 +194,8 @@ fn scan(
     }
 
     if (wgid.x == 0u && threadid.x == 0u) {
-        status[STATUS_SUBGROUP_BASE + info.shift / RADIX_LOG] = lane_count;
+        let pass_idx = info.shift / RADIX_LOG;
+        status[STATUS_SUBGROUP_BASE + pass_idx * STATUS_SUBGROUP_STRIDE + STATUS_STAGE_SCAN] = lane_count;
     }
 
     let sid = threadid.x / lane_count;
@@ -282,10 +288,15 @@ fn WLMS(key: u32, shift: u32, laneid: u32, lane_count: u32, lane_mask_lt: u32, s
         let ballot = unsafeSubgroupBallot(pred);
         eq_mask &= select(~ballot.x, ballot.x, pred);
     }
+    var subgroup_mask = 0xffffffffu;
+    if (lane_count != 32u) {
+        subgroup_mask = (1u << lane_count) - 1u;
+    }
+    eq_mask &= subgroup_mask;
     var out = countOneBits(eq_mask & lane_mask_lt);
-    let highest_rank_peer = lane_count - countLeadingZeros(eq_mask) - 1u;
+    let highest_rank_peer = select(lane_count - 1u, 31u - countLeadingZeros(eq_mask), eq_mask != 0u);
     var pre_inc = 0u;
-    if (laneid == highest_rank_peer) {
+    if (laneid == highest_rank_peer && eq_mask != 0u) {
         pre_inc = atomicAdd(&wg_warpHist[((key >> shift) & RADIX_MASK) + s_offset], out + 1u);
     }
     workgroupBarrier();
@@ -311,7 +322,8 @@ fn dvr_pass(
     }
 
     if (wgid.x == 0u && threadid.x == 0u) {
-        status[STATUS_SUBGROUP_BASE + info.shift / RADIX_LOG] = lane_count;
+        let pass_idx = info.shift / RADIX_LOG;
+        status[STATUS_SUBGROUP_BASE + pass_idx * STATUS_SUBGROUP_STRIDE + STATUS_STAGE_DVR] = lane_count;
     }
     // let warp_hists_size = clamp(BLOCK_DIM / lane_count * RADIX, 0u, PART_SIZE);
     for (var i = threadid.x; i < warp_hists_size; i += BLOCK_DIM) {

@@ -192,12 +192,12 @@ async function runSortingTest(mode, arraySize) {
 
     // Run DeviceRadixSort
     if (mode === 'all' || mode === 'deviceradix') {
-      const { sorted, gpuTime, subgroupSize } = await deviceRadixSort.sort(data);
+      const { sorted, gpuTime, subgroupSizes } = await deviceRadixSort.sort(data);
       results.deviceradix = {
         time: gpuTime,
         sorted,
         valid: validateSort(sorted),
-        subgroupSize
+        subgroupSizes
       };
     }
 
@@ -250,6 +250,10 @@ function displayResults(results, arraySize) {
 
   if (results.deviceradix) {
     const speedup = baseline / results.deviceradix.time;
+    const subgroupExtras = (results.deviceradix.subgroupSizes || []).map(({ pass, stage, size }) => ({
+      label: `Pass ${pass} ${DeviceRadixSort.STATUS_STAGE_NAMES[stage]}`,
+      value: `${formatNumber(size)} lanes`
+    }));
     html += createResultRow(
       'DeviceRadixSort',
       results.deviceradix.time,
@@ -257,7 +261,7 @@ function displayResults(results, arraySize) {
       speedup,
       '#f472b6',
       fastest,
-      results.deviceradix.subgroupSize ? [{ label: 'Subgroup size', value: `${formatNumber(results.deviceradix.subgroupSize)} lanes` }] : []
+      subgroupExtras
     );
   }
 

@@ -16,7 +16,9 @@ export class DeviceRadixSort {
   static REDUCE_KEYS_PER_THREAD = 30;
   static REDUCE_PART_SIZE = DeviceRadixSort.REDUCE_BLOCK_DIM * DeviceRadixSort.REDUCE_KEYS_PER_THREAD;
   static STATUS_ERROR_COUNT = 3; // Keep in sync with STATUS_ERR_* constants in the shader
-  static STATUS_LENGTH = DeviceRadixSort.STATUS_ERROR_COUNT + DeviceRadixSort.SORT_PASSES;
+  static STATUS_STAGE_COUNT = 3; // reduce_hist, scan, dvr_pass
+  static STATUS_STAGE_NAMES = ['reduce_hist', 'scan', 'dvr_pass'];
+  static STATUS_LENGTH = DeviceRadixSort.STATUS_ERROR_COUNT + DeviceRadixSort.SORT_PASSES * DeviceRadixSort.STATUS_STAGE_COUNT;
 
   constructor(device, maxKeys) {
     this.device = device;
@@ -286,11 +288,18 @@ export class DeviceRadixSort {
     const keysArray = new Uint32Array(resultKeys);
     const valuesArray = new Uint32Array(resultValues);
 
-    let subgroupSize = 0;
-    for (let i = DeviceRadixSort.STATUS_ERROR_COUNT; i < statusArray.length; i++) {
-      if (statusArray[i] !== 0) {
-        subgroupSize = statusArray[i];
-        break;
+    const subgroupSizes = [];
+    for (let pass = 0; pass < DeviceRadixSort.SORT_PASSES; pass++) {
+      for (let stage = 0; stage < DeviceRadixSort.STATUS_STAGE_COUNT; stage++) {
+        const idx = DeviceRadixSort.STATUS_ERROR_COUNT + pass * DeviceRadixSort.STATUS_STAGE_COUNT + stage;
+        const size = statusArray[idx];
+        if (size !== 0) {
+          subgroupSizes.push({
+            pass: pass + 1,
+            stage,
+            size
+          });
+        }
       }
     }
 
@@ -299,7 +308,7 @@ export class DeviceRadixSort {
       sorted.push({ key: keysArray[i], value: valuesArray[i] });
     }
 
-    return { sorted, gpuTime, subgroupSize };
+    return { sorted, gpuTime, subgroupSizes };
   }
 
   async downloadBuffer(buffer, size) {
