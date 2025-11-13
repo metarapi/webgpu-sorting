@@ -15,11 +15,12 @@ Simply open the GitHub Pages deployment in a browser on any system to validate s
 
 ## What It Tests
 
-Two GPU radix sort implementations ported to WGSL:
-1. **FidelityFX Radix Sort** (AMD) - 8 passes, 4-bit radix, 5 kernels per pass
-2. **DeviceRadixSort** (b0nes164) - 4 passes, 8-bit radix, 3 kernels per pass
+Three GPU radix sort implementations ported to WGSL:
+1. **FidelityFX Radix Sort** (AMD) — 8 passes, 4-bit radix, 5 kernels per pass
+2. **DeviceRadixSort** (b0nes164) — 4 passes, 8-bit radix, 3 kernels per pass
+3. **OneSweep** (b0nes164) — 4 passes, 8-bit radix, supports multiple subgroup sizes (16, 32, 64) via runtime detection and variant selection
 
-Both compared against JavaScript `Array.sort()` baseline with validation.
+All compared against JavaScript `Array.sort()` baseline with validation.
 
 ## Features
 
@@ -28,6 +29,8 @@ Both compared against JavaScript `Array.sort()` baseline with validation.
 - Configurable array sizes up to 10M elements
 - Dark mode UI
 - Results show execution time, correctness, and relative speedup
+- **Sort options:** Run all algorithms, or select FidelityFX, DeviceRadixSort, OneSweep, or JavaScript only
+- **OneSweep shader variants:** Automatically selects the best variant for your hardware (16, 32, or 64 lanes)
 
 ## Getting Started
 
@@ -52,8 +55,18 @@ Visit `http://localhost:3000/webgpu-sorting/`
 	- Logic for merging multiple subgroup histograms and prefix sums, supporting all modern GPU architectures.
 - See `tmp/AdaptationExplanation.md` for a detailed technical summary of these changes.
 
+### OneSweep Shader Variants
+- Added support for three OneSweep shader variants: `OneSweep16.wgsl`, `OneSweep32.wgsl`, and `OneSweep64.wgsl`. The app detects the hardware subgroup size and selects the optimal variant automatically for best compatibility and performance.
+
+### Sort Options
+- The UI now allows you to run all algorithms together, or select a specific sort: FidelityFX, DeviceRadixSort, OneSweep, or JavaScript only. Results include detected subgroup sizes and variant info for each run.
+
 ### UI Improvements
 - The results panel now shows detected subgroup sizes for each algorithm, and DeviceRadixSort pass details are collapsible for clarity.
+
+### Shader Files
+- See `src/shaders/onesweep/OneSweep16.wgsl`, `OneSweep32.wgsl`, and `OneSweep64.wgsl` for the new OneSweep variants.
+- See `src/shaders/deviceradix/DeviceRadixSort.wgsl` for the updated DeviceRadixSort implementation.
 
 ### Why?
 - These changes improve hardware portability, make debugging easier, and ensure the tool surfaces true GPU capabilities for subgroup/wave operations.
@@ -66,8 +79,8 @@ Visit `http://localhost:3000/webgpu-sorting/`
 ## Credits
 
 - **FidelityFX Radix Sort**: AMD FidelityFX SDK
-- **DeviceRadixSort**: Thomas Smith ([@b0nes164](https://github.com/b0nes164/GPUSorting))
-- WGSL ports and WebGPU implementation by project contributors
+- **DeviceRadixSort & OneSweep**: Thomas Smith ([@b0nes164](https://github.com/b0nes164/GPUSorting))
+- WGSL ports, OneSweep adaptation, and WebGPU implementation by project contributors
 
 ## License
 
