@@ -1,93 +1,104 @@
 # WebGPU Sorting Comparison
 
+A browser-based harness that validates and compares multiple GPU radix sort implementations in WGSL across vendors and architectures, with focus on subgroup behavior, memory ordering, and variant selection.
 
+## What’s inside
 
-A hardware compatibility testing tool for WebGPU sorting implementations. Deployed via GitHub Pages to enable quick browser-based testing across different GPU vendors (Apple, Intel, AMD, Nvidia) without local setup. [**Try it live on GitHub Pages**](https://metarapi.github.io/webgpu-sorting/)
+- **FidelityFX Parallel Sort** (4-bit digits, 8 passes)
+- **DeviceRadixSort** (8-bit digits, 4 passes; reduce, scan, scatter)
+- **OneSweep** (8-bit digits, 4 passes; decoupled-lookback prefix) with lane-agnostic ballot/shuffle fixes and per-lane variants
 
 ## Purpose
 
-This tool verifies that WGSL sorting implementations work correctly across diverse hardware configurations by testing:
-- **Subgroup operations** (ballot, shuffle, broadcast) vendor compatibility
-- **Progress guarantees** and memory ordering across GPU architectures
-- **Escape hatches** and fallback paths for unsupported features
+- Verify correctness and portability of subgroup operations (ballot, shuffle, broadcasts) across 16/32/64 and potentially 8-wide subgroups.
+- Exercise memory-ordering and forward progress assumptions required by decoupled-lookback scans and chained-scan style algorithms.
+- Provide fallbacks and variant selection when device subgroup behavior differs between runs or pipelines.
 
-Simply open the GitHub Pages deployment in a browser on any system to validate sorting behavior and performance characteristics specific to that GPU.
+## Algorithms under test
 
-## What It Tests
-
-Three GPU radix sort implementations ported to WGSL:
-1. **FidelityFX Radix Sort** (AMD) — 8 passes, 4-bit radix, 5 kernels per pass
-2. **DeviceRadixSort** (b0nes164) — 4 passes, 8-bit radix, 3 kernels per pass
-3. **OneSweep** (b0nes164) — 4 passes, 8-bit radix, supports multiple subgroup sizes (16, 32, 64) via runtime detection and variant selection
-
-All compared against JavaScript `Array.sort()` baseline with validation.
+- **FidelityFX Parallel Sort**: 4-bit radix, 8 passes for 32-bit keys, commonly structured as five stage actions per pass.
+- **DeviceRadixSort**: 8-bit radix, four passes, implemented as reduce_hist → scan → scatter kernels in WGSL.
+- **OneSweep**: 8-bit radix, four passes, using decoupled-lookback single-pass scan primitives, ported to WGSL with subgroup-safe ballot handling.
 
 ## Features
 
-- GPU timestamp-based performance measurement (when available)
-- Cross-validation between all implementations
-- Configurable array sizes up to 10M elements
-- Dark mode UI
-- Results show execution time, correctness, and relative speedup
-- **Sort options:** Run all algorithms, or select FidelityFX, DeviceRadixSort, OneSweep, or JavaScript only
-- **OneSweep shader variants:** Automatically selects the best variant for your hardware (16, 32, or 64 lanes)
-
-## Getting Started
-
-```sh
-npm install
-npm run dev # Development server
-npm run build # Production build
-npm run preview # Preview production build
-```
-
-Visit `http://localhost:3000/webgpu-sorting/`
-
-## Recent Changes (Nov 2025)
-
-### Subgroup Size Reporting
-- The app now reports the actual GPU subgroup size range using `adapter.info.subgroupMinSize` and `adapter.info.subgroupMaxSize` (when available), falling back to device/adapter limits if needed. This ensures the UI displays the true hardware subgroup configuration for more accurate compatibility testing.
-
-### DeviceRadixSort & OneSweep Shader Adaptation
-- Both shaders were adapted to support variable subgroup sizes (16, 32, 64, etc.) rather than assuming a fixed size (e.g., 64). This includes:
-	- Dynamic workgroup memory sizing and histogram partitioning based on runtime subgroup size.
-	- Use of `@builtin(subgroup_size)` and atomic operations for safe, portable reductions.
-	- Logic for merging multiple subgroup histograms and prefix sums, supporting all modern GPU architectures.
-- See `tmp/AdaptationExplanation.md` for a detailed technical summary of these changes.
-
-### OneSweep Shader Variants
-- Added support for three OneSweep shader variants: `OneSweep16.wgsl`, `OneSweep32.wgsl`, and `OneSweep64.wgsl`. The app detects the hardware subgroup size and selects the optimal variant automatically for best compatibility and performance.
-
-### Sort Options
-- The UI now allows you to run all algorithms together, or select a specific sort: FidelityFX, DeviceRadixSort, OneSweep, or JavaScript only. Results include detected subgroup sizes and variant info for each run.
-
-### UI Improvements
-- The results panel now shows detected subgroup sizes for each algorithm, and DeviceRadixSort pass details are collapsible for clarity.
-
-### Shader Files
-- See `src/shaders/onesweep/OneSweep16.wgsl`, `OneSweep32.wgsl`, and `OneSweep64.wgsl` for the new OneSweep variants.
-- See `src/shaders/deviceradix/DeviceRadixSort.wgsl` for the updated DeviceRadixSort implementation.
-
-### Why?
-- These changes improve hardware portability, make debugging easier, and ensure the tool surfaces true GPU capabilities for subgroup/wave operations.
+- Optional GPU timestamp-based profiling when the timestamp-query feature is available and enabled at device creation.
+- Cross-validation against a CPU baseline to verify per-pass correctness and final output equivalence.
+- Configurable problem sizes up to limits permitted by device caps such as maxBufferSize and maxStorageBufferBindingSize.
+- Mode selection: run-all or per-algorithm execution for FidelityFX, DeviceRadixSort, OneSweep, or CPU-only.
+- Automatic OneSweep variant selection by detected subgroup size range to balance portability and performance.
 
 ## Requirements
 
-- Browser with WebGPU subgroups support (Chrome 113+, Edge 113+)
-- GPU with subgroup/wave operations
+- Browser/runtime with WebGPU subgroups available; broadly available in Chrome 134+, earlier versions offered experimental support with limitations.
+- Device feature “subgroups” requested at device creation and “enable subgroups;” present in WGSL modules that use subgroup intrinsics.
+- For timestamped profiling, request and use the timestamp-query feature with guarded code paths.
 
-## Hardware Compatibility Warning
+## Subgroup sizes and variants
 
-**Note:** On some Intel GPUs (especially Arc and certain integrated graphics), the reported subgroup size may be as low as 8 lanes due to driver heuristics. Both DeviceRadixSort and OneSweep require a minimum subgroup size of 16 lanes and will not work correctly if the hardware reports 8. Someone smarter should implement this without exceeding the 32KB workgroup memory with subgroup size < 16.
+The app detects the supported subgroup range using adapter info and device limits (min/max subgroup size) and records the effective subgroup size per dispatch.
 
-If you see a warning in the UI about subgroup size, or errors like `warp hist capacity exceeded` or `shader error in global_hist: 0xdead0001`, your hardware likely does not support the required subgroup size for these algorithms. Refreshing the page may temporarily work due to driver quirks, but subsequent runs will fail. For best results, use a GPU that reports a subgroup size of at least 16 lanes.
+OneSweep ships dedicated variants for 16, 32, and 64 lanes, and the ballot logic in WLMS is implemented with vec4<u32> ballots to cover 8–64 lanes robustly.
+
+On Intel Arc, pipelines may compile to SIMD8 or SIMD16 depending on heuristics; a wave8-compatible configuration or variant selection is required for reliable runs.
+
+## Wave8 guidance (Intel)
+
+If a pipeline runs at subgroup_size=8, per-subgroup histogram capacity scales as (BLOCK_DIM / subgroup_size) × RADIX, which can exceed a 16-specialized capacity if not adjusted.
+
+Provide a wave8 variant for DeviceRadixSort/OneSweep by reducing the pass workgroup size (e.g., BLOCK_DIM=128) so WARP_HIST_CAPACITY matches the required histogram bins at wave8.
+
+Keep reduce/global-hist workgroups at sizes that remain divisible by lane_count while sizing shared arrays with MIN_SUBGROUP_SIZE=8 in the wave8 build.
+
+## Running locally
+
+```sh
+npm install
+npm run dev
+npm run build
+npm run preview
+```
+
+Visit the local preview address and verify that the device reports the expected subgroup range and that features are enabled as indicated by the UI.
+
+## Usage notes
+
+- Select algorithms individually or run all; the result panel shows per-pass timings (if timestamp queries are enabled), correctness, and relative speedup.
+- The harness records the subgroup size observed per dispatch so you can correlate correctness and performance with the active wave width.
+- For large arrays, ensure device limits requested at creation time are sufficient for buffer sizes and binding sizes required by chosen problem size.
+
+## Clearing persistent state
+
+Clear or reinitialize shared scratch buffers (hist, pass_hist, bump, status) between runs, as algorithms use atomics and prefix data that otherwise persist across dispatches.
+
+A small memset pass or host writes to zero these buffers prevents accumulation artifacts on repeated invocations.
+
+## Troubleshooting
+
+- Errors like “warp hist capacity exceeded” indicate subgroup_size was smaller than the variant assumed, inflating per-subgroup histogram usage beyond the compiled capacity.
+- Errors like “shader error in global_hist: 0xDEAD0001” typically mean lane_count < the entrypoint’s MIN_SUBGROUP_SIZE or workgroup_size was not divisible by the active subgroup size.
+- If runs succeed once then fail on subsequent runs, suspect subgroup-size changes between pipelines or stale scratch buffers not cleared between dispatches.
+
+## Implementation notes
+
+- Subgroup ballots are handled via vec4<u32> bitfields, combining .x/.y for 64 lanes and avoiding undefined 32+ bit shifts in rank computations.
+- DeviceRadixSort kernels: reduce_hist, scan, and scatter (dvr_pass) use @builtin(subgroup_size) with atomics and subgroup scans to merge per-subgroup histograms safely.
+- OneSweep variants maintain the decoupled-lookback pattern while ensuring subgroup-agnostic spine scans and per-subgroup histogram merges.
+
+## Performance measurement
+
+When available, timestamp queries are used to measure GPU times per pass and aggregate totals; guard these paths and provide CPU-side timing fallbacks.
+
+Note that timestamp precision and availability vary by platform and driver, so comparisons should be interpreted alongside device limits and active subgroup sizes.
 
 ## Credits
 
-- **FidelityFX Radix Sort**: AMD FidelityFX SDK
-- **DeviceRadixSort & OneSweep**: Thomas Smith ([@b0nes164](https://github.com/b0nes164/GPUSorting))
-- WGSL ports, OneSweep adaptation, and WebGPU implementation by project contributors
+FidelityFX Parallel Sort by AMD, with public documentation describing its radix organization and stages.
+
+DeviceRadixSort and OneSweep originate from Thomas Smith's ([@b0nes164](https://github.com/b0nes164/GPUSorting)) work and the OneSweep paper by Adinets and Merrill.
+
+WGSL ports, subgroup fixes, and WebGPU harness integration by project contributors.
 
 ## License
 
-MIT
+MIT license for this repository; consult third-party algorithm licenses as applicable.
