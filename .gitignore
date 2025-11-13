@@ -14,6 +14,8 @@ dist-ssr
 tmp/
 
 # Editor directories and files
+src/shaders/onesweep/*
+!src/shaders/onesweep/OneSweep.wgsl
 .vscode/*
 !.vscode/extensions.json
 .idea

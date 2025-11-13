@@ -1,12 +1,14 @@
 import './style.css';
 import { FidelityFXSort } from './sorting/FidelityFXSort.js';
 import { DeviceRadixSort } from './sorting/DeviceRadixSort.js';
+import { OneSweep } from './sorting/OneSweep.js';
 import { generateTestData, validateSort, compareArrays, formatTime, formatNumber } from './utils.js';
 
 // WebGPU device and context
 let device = null;
 let fidelityFXSort = null;
 let deviceRadixSort = null;
+let oneSweep = null;
 
 // Initialize the application
 async function init() {
@@ -16,7 +18,7 @@ async function init() {
     <div class="container mx-auto px-4 py-8">
       <header class="mb-8">
         <h1 class="text-4xl font-bold mb-2">WebGPU Sorting Algorithms Comparison</h1>
-        <p class="text-gray-400">3-way comparison: FidelityFX vs DeviceRadixSort vs JavaScript</p>
+        <p class="text-gray-400">4-way comparison: FidelityFX vs DeviceRadixSort vs OneSweep vs JavaScript</p>
       </header>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
@@ -24,9 +26,10 @@ async function init() {
         <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
           <h2 class="text-xl font-semibold mb-4">Test Mode</h2>
           <select id="algorithm-select" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <option value="all">All Algorithms (3-way)</option>
+            <option value="all">All Algorithms (4-way)</option>
             <option value="fidelityfx">FidelityFX Only</option>
             <option value="deviceradix">DeviceRadixSort Only</option>
+            <option value="onesweep">OneSweep Only</option>
             <option value="javascript">JavaScript Only</option>
           </select>
         </div>
@@ -120,6 +123,9 @@ async function initWebGPU() {
     
     deviceRadixSort = new DeviceRadixSort(device, maxKeys);
     await deviceRadixSort.init();
+    
+    oneSweep = new OneSweep(device, maxKeys);
+    await oneSweep.init();
 
     statusEl.innerHTML = `<p class="text-sm text-green-400">✓ WebGPU initialized with ${features.join(', ')}</p>`;
     return true;
@@ -201,6 +207,16 @@ async function runSortingTest(mode, arraySize) {
       };
     }
 
+    // Run OneSweep
+    if (mode === 'all' || mode === 'onesweep') {
+      const { sorted, gpuTime } = await oneSweep.sort(data);
+      results.onesweep = {
+        time: gpuTime,
+        sorted,
+        valid: validateSort(sorted)
+      };
+    }
+
     // Display results
     displayResults(results, arraySize);
   } catch (error) {
@@ -262,6 +278,18 @@ function displayResults(results, arraySize) {
       '#f472b6',
       fastest,
       subgroupExtras
+    );
+  }
+
+  if (results.onesweep) {
+    const speedup = baseline / results.onesweep.time;
+    html += createResultRow(
+      'OneSweep',
+      results.onesweep.time,
+      results.onesweep.valid.isSorted,
+      speedup,
+      '#fb923c',
+      fastest
     );
   }
 
