@@ -76,6 +76,12 @@ Visit `http://localhost:3000/webgpu-sorting/`
 - Browser with WebGPU subgroups support (Chrome 113+, Edge 113+)
 - GPU with subgroup/wave operations
 
+## Hardware Compatibility Warning
+
+**Note:** On some Intel GPUs (especially Arc and certain integrated graphics), the reported subgroup size may be as low as 8 lanes due to driver heuristics. Both DeviceRadixSort and OneSweep require a minimum subgroup size of 16 lanes and will not work correctly if the hardware reports 8. Someone smarter should implement this without exceeding the 32KB workgroup memory with subgroup size < 16.
+
+If you see a warning in the UI about subgroup size, or errors like `warp hist capacity exceeded` or `shader error in global_hist: 0xdead0001`, your hardware likely does not support the required subgroup size for these algorithms. Refreshing the page may temporarily work due to driver quirks, but subsequent runs will fail. For best results, use a GPU that reports a subgroup size of at least 16 lanes.
+
 ## Credits
 
 - **FidelityFX Radix Sort**: AMD FidelityFX SDK
