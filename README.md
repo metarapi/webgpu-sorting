@@ -40,6 +40,24 @@ npm run preview # Preview production build
 
 Visit `http://localhost:3000/webgpu-sorting/`
 
+## Recent Changes (Nov 2025)
+
+### Subgroup Size Reporting
+- The app now reports the actual GPU subgroup size range using `adapter.info.subgroupMinSize` and `adapter.info.subgroupMaxSize` (when available), falling back to device/adapter limits if needed. This ensures the UI displays the true hardware subgroup configuration for more accurate compatibility testing.
+
+### DeviceRadixSort & OneSweep Shader Adaptation
+- Both shaders were adapted to support variable subgroup sizes (16, 32, 64, etc.) rather than assuming a fixed size (e.g., 64). This includes:
+	- Dynamic workgroup memory sizing and histogram partitioning based on runtime subgroup size.
+	- Use of `@builtin(subgroup_size)` and atomic operations for safe, portable reductions.
+	- Logic for merging multiple subgroup histograms and prefix sums, supporting all modern GPU architectures.
+- See `tmp/AdaptationExplanation.md` for a detailed technical summary of these changes.
+
+### UI Improvements
+- The results panel now shows detected subgroup sizes for each algorithm, and DeviceRadixSort pass details are collapsible for clarity.
+
+### Why?
+- These changes improve hardware portability, make debugging easier, and ensure the tool surfaces true GPU capabilities for subgroup/wave operations.
+
 ## Requirements
 
 - Browser with WebGPU subgroups support (Chrome 113+, Edge 113+)

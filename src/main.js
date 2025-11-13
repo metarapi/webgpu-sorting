@@ -127,7 +127,43 @@ async function initWebGPU() {
     oneSweep = new OneSweep(device, maxKeys);
     await oneSweep.init();
 
-    statusEl.innerHTML = `<p class="text-sm text-green-400">✓ WebGPU initialized with ${features.join(', ')}</p>`;
+    let adapterInfo = null;
+    try {
+      if ('info' in adapter && adapter.info) {
+        adapterInfo = adapter.info;
+      } else if (typeof adapter.requestAdapterInfo === 'function') {
+        adapterInfo = await adapter.requestAdapterInfo();
+      }
+    } catch (infoError) {
+      console.warn('Unable to query adapter info', infoError);
+    }
+
+    const deviceLimits = device.limits;
+    const formatLimit = value => (typeof value === 'number' && Number.isFinite(value)) ? formatNumber(value) : 'n/a';
+    const normalizeSubgroup = value => (typeof value === 'number' && Number.isFinite(value) && value > 0) ? value : null;
+    const rawMinSubgroup = normalizeSubgroup(adapterInfo?.subgroupMinSize) ?? normalizeSubgroup(deviceLimits.minSubgroupSize) ?? normalizeSubgroup(limits.minSubgroupSize);
+    const rawMaxSubgroup = normalizeSubgroup(adapterInfo?.subgroupMaxSize) ?? normalizeSubgroup(deviceLimits.maxSubgroupSize) ?? normalizeSubgroup(limits.maxSubgroupSize);
+    let subgroupRange = 'unavailable';
+    if (rawMinSubgroup !== null || rawMaxSubgroup !== null) {
+      const minLabel = rawMinSubgroup !== null ? formatNumber(rawMinSubgroup) : 'n/a';
+      const maxLabel = rawMaxSubgroup !== null ? formatNumber(rawMaxSubgroup) : 'n/a';
+      subgroupRange = (rawMinSubgroup !== null && rawMaxSubgroup !== null && rawMinSubgroup === rawMaxSubgroup)
+        ? `${minLabel} lanes`
+        : `${minLabel} – ${maxLabel} lanes`;
+    }
+    const workgroupStorageValue = formatLimit(deviceLimits.maxComputeWorkgroupStorageSize);
+    const workgroupStorage = workgroupStorageValue === 'n/a'
+      ? 'unavailable'
+      : `${workgroupStorageValue} bytes`;
+
+    statusEl.innerHTML = `
+      <div class="text-sm space-y-1">
+        <p class="text-green-400">✓ WebGPU initialized</p>
+        <p class="text-gray-300"><span class="text-gray-400">Features:</span> ${features.join(', ')}</p>
+        <p class="text-gray-300"><span class="text-gray-400">Subgroup size range:</span> ${subgroupRange}</p>
+        <p class="text-gray-300"><span class="text-gray-400">Workgroup storage:</span> ${workgroupStorage}</p>
+      </div>
+    `;
     return true;
   } catch (error) {
     statusEl.innerHTML = `<p class="text-sm text-red-400">❌ Error: ${error.message}</p>`;
@@ -209,11 +245,13 @@ async function runSortingTest(mode, arraySize) {
 
     // Run OneSweep
     if (mode === 'all' || mode === 'onesweep') {
-      const { sorted, gpuTime } = await oneSweep.sort(data);
+      const { sorted, gpuTime, subgroupSize, shaderVariant } = await oneSweep.sort(data);
       results.onesweep = {
         time: gpuTime,
         sorted,
-        valid: validateSort(sorted)
+        valid: validateSort(sorted),
+        subgroupSize,
+        shaderVariant
       };
     }
 
@@ -267,9 +305,10 @@ function displayResults(results, arraySize) {
   if (results.deviceradix) {
     const speedup = baseline / results.deviceradix.time;
     const subgroupExtras = (results.deviceradix.subgroupSizes || []).map(({ pass, stage, size }) => ({
-      label: `Pass ${pass} ${DeviceRadixSort.STATUS_STAGE_NAMES[stage]}`,
+      label: `Pass ${pass} ${DeviceRadixSort.STATUS_STAGE_NAMES[stage].replace(/_/g, ' ')}`,
       value: `${formatNumber(size)} lanes`
     }));
+    const uniqueSizes = [...new Set((results.deviceradix.subgroupSizes || []).map(item => item.size))];
     html += createResultRow(
       'DeviceRadixSort',
       results.deviceradix.time,
@@ -277,7 +316,18 @@ function displayResults(results, arraySize) {
       speedup,
       '#f472b6',
       fastest,
-      subgroupExtras
+      {
+        inline: uniqueSizes.length
+          ? [{ label: 'Detected subgroup', value: `${uniqueSizes.map(size => `${formatNumber(size)} lanes`).join(', ')}` }]
+          : [],
+        collapsible: subgroupExtras.length
+          ? {
+              summary: 'Show per-pass subgroup lanes',
+              hideSummary: 'Hide per-pass subgroup lanes',
+              items: subgroupExtras
+            }
+          : null
+      }
     );
   }
 
@@ -289,7 +339,15 @@ function displayResults(results, arraySize) {
       results.onesweep.valid.isSorted,
       speedup,
       '#fb923c',
-      fastest
+      fastest,
+      {
+        inline: results.onesweep.subgroupSize
+          ? [{
+              label: 'Detected subgroup',
+              value: `${formatNumber(results.onesweep.subgroupSize)} lanes${results.onesweep.shaderVariant ? ` (${results.onesweep.shaderVariant})` : ''}`
+            }]
+          : []
+      }
     );
   }
 
@@ -314,11 +372,33 @@ function displayResults(results, arraySize) {
   resultsEl.innerHTML = html;
 }
 
-function createResultRow(name, time, valid, speedup, color, fastest, extra = []) {
+function createResultRow(name, time, valid, speedup, color, fastest, extra = {}) {
   const validIcon = valid ? '✓' : '✗';
   const validColor = valid ? 'text-green-400' : 'text-red-400';
   const isFastest = Math.abs(time - fastest) < 0.01;  // Check time, not speedup
-  const extraContent = extra.map(({ label, value }) => `<p><span class="text-gray-400">${label}:</span> ${value}</p>`).join('');
+  const inlineContent = (extra.inline || []).map(({ label, value }) => `<p><span class="text-gray-400">${label}:</span> ${value}</p>`).join('');
+
+  let collapsibleContent = '';
+  if (extra.collapsible && Array.isArray(extra.collapsible.items) && extra.collapsible.items.length > 0) {
+    const summaryLabel = extra.collapsible.summary || 'Show details';
+    const hideLabel = extra.collapsible.hideSummary || 'Hide details';
+    const detailItems = extra.collapsible.items
+      .map(({ label, value }) => `<p><span class="text-gray-400">${label}:</span> ${value}</p>`)
+      .join('');
+    collapsibleContent = `
+      <details class="group mt-2">
+        <summary class="cursor-pointer text-blue-300 text-sm select-none">
+          <span class="group-open:hidden">${summaryLabel}</span>
+          <span class="hidden group-open:inline">${hideLabel}</span>
+        </summary>
+        <div class="mt-2 pl-3 border-l border-gray-700 space-y-1 text-sm">
+          ${detailItems}
+        </div>
+      </details>
+    `;
+  }
+
+  const extraContent = inlineContent + collapsibleContent;
   
   return `
     <div class="mb-3 p-3 bg-gray-900 rounded-lg">

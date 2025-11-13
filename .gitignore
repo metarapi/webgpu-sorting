@@ -15,7 +15,9 @@ tmp/
 
 # Editor directories and files
 src/shaders/onesweep/*
-!src/shaders/onesweep/OneSweep.wgsl
+!src/shaders/onesweep/OneSweep16.wgsl
+!src/shaders/onesweep/OneSweep32.wgsl
+!src/shaders/onesweep/OneSweep64.wgsl
 .vscode/*
 !.vscode/extensions.json
 .idea

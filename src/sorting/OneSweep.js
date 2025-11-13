@@ -2,7 +2,10 @@
  * OneSweep - WebGPU Implementation
  * Based on Thomas Smith's GPUSorting library
  */
-import shader from '../shaders/onesweep/OneSweep.wgsl?raw';
+import shader16 from '../shaders/onesweep/OneSweep16.wgsl?raw';
+import shader32 from '../shaders/onesweep/OneSweep32.wgsl?raw';
+import shader64 from '../shaders/onesweep/OneSweep64.wgsl?raw';
+import subgroupProbeShader from '../shaders/utils/SubgroupSizeDetect.wgsl?raw';
 
 export class OneSweep {
   static SORT_PASSES = 4;
@@ -24,13 +27,20 @@ export class OneSweep {
     this.buffers = null;
     this.bindGroupLayout = null;
     this.timingSupported = device.features.has('timestamp-query');
+    this.subgroupSize = 0;
+    this.shaderVariantLabel = '';
   }
 
   async init() {
+    const subgroupSize = await this.detectSubgroupSize();
+    const { shaderSource, label } = this.selectShaderVariant(subgroupSize);
+    this.shaderVariantLabel = label;
+    console.info(`OneSweep: using ${label} shader variant (subgroup size ${subgroupSize}).`);
+
     // Create shader module
     const shaderModule = this.device.createShaderModule({
-      label: 'OneSweep Shader',
-      code: shader
+      label: `OneSweep Shader (${label})`,
+      code: shaderSource
     });
 
     // Check for compilation errors
@@ -330,7 +340,81 @@ export class OneSweep {
       sorted.push({ key: keysArray[i], value: valuesArray[i] });
     }
 
-    return { sorted, gpuTime };
+    return {
+      sorted,
+      gpuTime,
+      subgroupSize: this.subgroupSize,
+      shaderVariant: this.shaderVariantLabel
+    };
+  }
+
+  selectShaderVariant(size) {
+    if (size >= 48) {
+      return { shaderSource: shader64, label: 'wave64' };
+    }
+    if (size >= 24) {
+      return { shaderSource: shader32, label: 'wave32' };
+    }
+    return { shaderSource: shader16, label: 'wave16' };
+  }
+
+  async detectSubgroupSize() {
+    if (this.subgroupSize > 0) {
+      return this.subgroupSize;
+    }
+
+    const module = this.device.createShaderModule({
+      label: 'OneSweep Subgroup Probe',
+      code: subgroupProbeShader
+    });
+
+    const pipeline = this.device.createComputePipeline({
+      layout: 'auto',
+      compute: { module, entryPoint: 'main' }
+    });
+
+    const outputBuffer = this.device.createBuffer({
+      size: 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+    });
+
+    const stagingBuffer = this.device.createBuffer({
+      size: 4,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
+
+    const bindGroup = this.device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: outputBuffer } }]
+    });
+
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(1);
+    pass.end();
+    encoder.copyBufferToBuffer(outputBuffer, 0, stagingBuffer, 0, 4);
+    this.device.queue.submit([encoder.finish()]);
+
+    await this.device.queue.onSubmittedWorkDone();
+
+    try {
+      await stagingBuffer.mapAsync(GPUMapMode.READ);
+      const detected = new Uint32Array(stagingBuffer.getMappedRange())[0];
+      stagingBuffer.unmap();
+      this.subgroupSize = detected !== 0 ? detected : 0;
+    } finally {
+      stagingBuffer.destroy();
+      outputBuffer.destroy();
+    }
+
+    if (this.subgroupSize === 0) {
+      // Default to wave16 when hardware failed to report a subgroup size.
+      this.subgroupSize = 16;
+    }
+
+    return this.subgroupSize;
   }
 
   async downloadBuffer(buffer, size) {
