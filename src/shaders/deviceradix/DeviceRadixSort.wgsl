@@ -280,28 +280,68 @@ fn scan(
 var<workgroup> wg_warpHist: array<atomic<u32>, WARP_HIST_CAPACITY>;
 var<workgroup> wg_localHist: array<u32, RADIX>;
 
-fn WLMS(key: u32, shift: u32, laneid: u32, lane_count: u32, lane_mask_lt: u32, s_offset: u32) -> u32 {
-    var eq_mask = 0xffffffffu;
-    for(var k = 0u; k < RADIX_LOG; k += 1u) {
-        let curr_bit = 1u << (k + shift);
-        let pred = (key & curr_bit) != 0u;
+@diagnostic(off, subgroup_uniformity)
+fn WLMS(
+    key: u32,
+    shift: u32,
+    laneid: u32,
+    lane_count: u32,
+    _lane_mask_lt_unused: u32,
+    s_offset: u32
+) -> u32 {
+    var eq_lo: u32 = 0xffffffffu;
+    var eq_hi: u32 = 0xffffffffu;
+    for (var k = 0u; k < RADIX_LOG; k += 1u) {
+        let bit = 1u << (k + shift);
+        let pred = (key & bit) != 0u;
         let ballot = unsafeSubgroupBallot(pred);
-        eq_mask &= select(~ballot.x, ballot.x, pred);
+        eq_lo &= select(~ballot.x, ballot.x, pred);
+        eq_hi &= select(~ballot.y, ballot.y, pred);
     }
-    var subgroup_mask = 0xffffffffu;
-    if (lane_count != 32u) {
-        subgroup_mask = (1u << lane_count) - 1u;
+
+    var sub_lo: u32 = 0xffffffffu;
+    var sub_hi: u32 = 0u;
+    if (lane_count < 32u) {
+        sub_lo = select(0u, (1u << lane_count) - 1u, lane_count != 0u);
+        sub_hi = 0u;
+    } else if (lane_count == 32u) {
+        sub_lo = 0xffffffffu;
+        sub_hi = 0u;
+    } else if (lane_count < 64u) {
+        sub_lo = 0xffffffffu;
+        let hi_bits = lane_count - 32u;
+        sub_hi = select(0u, (1u << hi_bits) - 1u, hi_bits != 0u);
+    } else {
+        sub_lo = 0xffffffffu;
+        sub_hi = 0xffffffffu;
     }
-    eq_mask &= subgroup_mask;
-    var out = countOneBits(eq_mask & lane_mask_lt);
-    let highest_rank_peer = select(lane_count - 1u, 31u - countLeadingZeros(eq_mask), eq_mask != 0u);
+    eq_lo &= sub_lo;
+    eq_hi &= sub_hi;
+
+    var rank: u32 = 0u;
+    if (laneid < 32u) {
+        let lt_lo = select(0u, (1u << laneid) - 1u, laneid != 0u);
+        rank = countOneBits(eq_lo & lt_lo);
+    } else {
+        let hi_lane = laneid - 32u;
+        let lt_hi = select(0u, (1u << hi_lane) - 1u, hi_lane != 0u);
+        rank = countOneBits(eq_lo) + countOneBits(eq_hi & lt_hi);
+    }
+
+    var highest = lane_count - 1u;
+    if (eq_hi != 0u) {
+        highest = 32u + (31u - countLeadingZeros(eq_hi));
+    } else if (eq_lo != 0u) {
+        highest = 31u - countLeadingZeros(eq_lo);
+    }
+
     var pre_inc = 0u;
-    if (laneid == highest_rank_peer && eq_mask != 0u) {
-        pre_inc = atomicAdd(&wg_warpHist[((key >> shift) & RADIX_MASK) + s_offset], out + 1u);
+    if (laneid == highest && (eq_lo != 0u || eq_hi != 0u)) {
+        pre_inc = atomicAdd(&wg_warpHist[((key >> shift) & RADIX_MASK) + s_offset], rank + 1u);
     }
     workgroupBarrier();
-    out += unsafeSubgroupShuffle(pre_inc, highest_rank_peer);
-    return out;
+
+    return rank + unsafeSubgroupShuffle(pre_inc, highest);
 }
 
 @compute @workgroup_size(BLOCK_DIM, 1, 1)
@@ -354,10 +394,9 @@ fn dvr_pass(
     var offsets = array<u32, KEYS_PER_THREAD>();
     {
         let shift = info.shift;
-        let lane_mask_lt = (1u << laneid) - 1u;
         let s_offset = sid * RADIX;
         for(var k = 0u; k < KEYS_PER_THREAD; k += 1u) {
-            offsets[k] = WLMS(keys[k], shift, laneid, lane_count, lane_mask_lt, s_offset);
+            offsets[k] = WLMS(keys[k], shift, laneid, lane_count, 0u, s_offset);
         }
     }
     workgroupBarrier();
