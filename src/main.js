@@ -151,6 +151,12 @@ async function initWebGPU() {
     const normalizeSubgroup = value => (typeof value === 'number' && Number.isFinite(value) && value > 0) ? value : null;
     const rawMinSubgroup = normalizeSubgroup(adapterInfo?.subgroupMinSize) ?? normalizeSubgroup(deviceLimits.minSubgroupSize) ?? normalizeSubgroup(limits.minSubgroupSize);
     const rawMaxSubgroup = normalizeSubgroup(adapterInfo?.subgroupMaxSize) ?? normalizeSubgroup(deviceLimits.maxSubgroupSize) ?? normalizeSubgroup(limits.maxSubgroupSize);
+    const warnings = [];
+    if (rawMinSubgroup !== null && rawMinSubgroup < 16) {
+      const warning = `Warning: minimum subgroup size is ${formatNumber(rawMinSubgroup)} lanes; DeviceRadixSort and OneSweep expect at least 16 and may fail.`;
+      warnings.push(`<p class="text-yellow-400">${warning}</p>`);
+      console.warn(warning);
+    }
     let subgroupRange = 'unavailable';
     if (rawMinSubgroup !== null || rawMaxSubgroup !== null) {
       const minLabel = rawMinSubgroup !== null ? formatNumber(rawMinSubgroup) : 'n/a';
@@ -170,6 +176,7 @@ async function initWebGPU() {
         <p class="text-gray-300"><span class="text-gray-400">Features:</span> ${features.join(', ')}</p>
         <p class="text-gray-300"><span class="text-gray-400">Subgroup size range:</span> ${subgroupRange}</p>
         <p class="text-gray-300"><span class="text-gray-400">Workgroup storage:</span> ${workgroupStorage}</p>
+        ${warnings.join('')}
       </div>
     `;
     return true;
@@ -288,30 +295,40 @@ function displayResults(results, arraySize) {
   // Display each algorithm's results
   if (results.javascript) {
     const speedup = baseline / results.javascript.time;
+    const throughput = (arraySize / (results.javascript.time / 1000)) / 1_000_000; // MKeys/s
+    const zeroWarning = results.javascript.valid.zeroCount === arraySize ? 'Output is all zeros!' : null;
     html += createResultRow(
       'JavaScript Array.sort',
       results.javascript.time,
       results.javascript.valid.isSorted,
       speedup,
+      throughput,
       '#60a5fa',
-      fastest
+      fastest,
+      { warning: zeroWarning }
     );
   }
 
   if (results.fidelityfx) {
     const speedup = baseline / results.fidelityfx.time;
+    const throughput = (arraySize / (results.fidelityfx.time / 1000)) / 1_000_000; // MKeys/s
+    const zeroWarning = results.fidelityfx.valid.zeroCount === arraySize ? 'Output is all zeros!' : null;
     html += createResultRow(
       'FidelityFX Radix Sort',
       results.fidelityfx.time,
       results.fidelityfx.valid.isSorted,
       speedup,
+      throughput,
       '#4ade80',
-      fastest
+      fastest,
+      { warning: zeroWarning }
     );
   }
 
   if (results.deviceradix) {
     const speedup = baseline / results.deviceradix.time;
+    const throughput = (arraySize / (results.deviceradix.time / 1000)) / 1_000_000; // MKeys/s
+    const zeroWarning = results.deviceradix.valid.zeroCount === arraySize ? 'Output is all zeros!' : null;
     const subgroupExtras = (results.deviceradix.subgroupSizes || []).map(({ pass, stage, size }) => ({
       label: `Pass ${pass} ${DeviceRadixSort.STATUS_STAGE_NAMES[stage].replace(/_/g, ' ')}`,
       value: `${formatNumber(size)} lanes`
@@ -322,9 +339,11 @@ function displayResults(results, arraySize) {
       results.deviceradix.time,
       results.deviceradix.valid.isSorted,
       speedup,
+      throughput,
       '#f472b6',
       fastest,
       {
+        warning: zeroWarning,
         inline: uniqueSizes.length
           ? [{ label: 'Detected subgroup', value: `${uniqueSizes.map(size => `${formatNumber(size)} lanes`).join(', ')}` }]
           : [],
@@ -341,14 +360,18 @@ function displayResults(results, arraySize) {
 
   if (results.onesweep) {
     const speedup = baseline / results.onesweep.time;
+    const throughput = (arraySize / (results.onesweep.time / 1000)) / 1_000_000; // MKeys/s
+    const zeroWarning = results.onesweep.valid.zeroCount === arraySize ? 'Output is all zeros!' : null;
     html += createResultRow(
       'OneSweep',
       results.onesweep.time,
       results.onesweep.valid.isSorted,
       speedup,
+      throughput,
       '#fb923c',
       fastest,
       {
+        warning: zeroWarning,
         inline: results.onesweep.subgroupSize
           ? [{
               label: 'Detected subgroup',
@@ -359,10 +382,10 @@ function displayResults(results, arraySize) {
     );
   }
 
-  // Cross-validation if multiple algorithms ran
+  // Cross-Validation if multiple algorithms ran
   if (Object.keys(results).length > 1) {
     html += `<div class="border-t border-gray-700 pt-4 mt-4">`;
-    html += `<p class="font-semibold mb-2">Cross-Validation:</p>`;
+    html += `<p class="font-semibold mb-2">Cross-Validation (Keys & Values):</p>`;
     
     const algos = Object.keys(results);
     for (let i = 0; i < algos.length - 1; i++) {
@@ -380,11 +403,13 @@ function displayResults(results, arraySize) {
   resultsEl.innerHTML = html;
 }
 
-function createResultRow(name, time, valid, speedup, color, fastest, extra = {}) {
+function createResultRow(name, time, valid, speedup, throughput, color, fastest, extra = {}) {
   const validIcon = valid ? '✓' : '✗';
   const validColor = valid ? 'text-green-400' : 'text-red-400';
   const isFastest = Math.abs(time - fastest) < 0.01;  // Check time, not speedup
   const inlineContent = (extra.inline || []).map(({ label, value }) => `<p><span class="text-gray-400">${label}:</span> ${value}</p>`).join('');
+
+  const warningContent = extra.warning ? `<p class="text-red-400 font-bold">⚠️ ${extra.warning}</p>` : '';
 
   let collapsibleContent = '';
   if (extra.collapsible && Array.isArray(extra.collapsible.items) && extra.collapsible.items.length > 0) {
@@ -406,7 +431,7 @@ function createResultRow(name, time, valid, speedup, color, fastest, extra = {})
     `;
   }
 
-  const extraContent = inlineContent + collapsibleContent;
+  const extraContent = warningContent + inlineContent + collapsibleContent;
   
   return `
     <div class="mb-3 p-3 bg-gray-900 rounded-lg">
@@ -421,6 +446,7 @@ function createResultRow(name, time, valid, speedup, color, fastest, extra = {})
       <div class="ml-5 mt-2 space-y-1 text-sm">
         <p><span class="text-gray-400">Time:</span> ${formatTime(time)}</p>
         <p><span class="text-gray-400">Speedup:</span> ${speedup.toFixed(2)}×</p>
+        <p><span class="text-gray-400">Throughput:</span> ${throughput.toFixed(2)} MKeys/s</p>
         ${extraContent}
       </div>
     </div>

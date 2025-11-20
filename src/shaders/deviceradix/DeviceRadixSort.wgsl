@@ -279,6 +279,7 @@ fn scan(
 // var<workgroup> wg_warpHist: array<atomic<u32>, PART_SIZE>;
 var<workgroup> wg_warpHist: array<atomic<u32>, WARP_HIST_CAPACITY>;
 var<workgroup> wg_localHist: array<u32, RADIX>;
+var<workgroup> wg_payload: array<u32, PART_SIZE>;
 
 @diagnostic(off, subgroup_uniformity)
 fn WLMS(
@@ -372,6 +373,7 @@ fn dvr_pass(
     workgroupBarrier();
 
     var keys = array<u32, KEYS_PER_THREAD>();
+    var values = array<u32, KEYS_PER_THREAD>();
     {
         let dev_offset = wgid.x * PART_SIZE;
         let s_offset = sid * lane_count * KEYS_PER_THREAD;
@@ -379,6 +381,7 @@ fn dvr_pass(
         if (wgid.x < info.thread_blocks - 1) {
             for (var k = 0u; k < KEYS_PER_THREAD; k += 1u) {
                 keys[k] = sort[i];
+                values[k] = payload[i];
                 i += lane_count;
             }
         }
@@ -386,6 +389,7 @@ fn dvr_pass(
         if (wgid.x == info.thread_blocks - 1) {
             for (var k = 0u; k < KEYS_PER_THREAD; k += 1u) {
                 keys[k] = select(0xffffffffu, sort[i], i < info.size);
+                values[k] = select(0u, payload[i], i < info.size);
                 i += lane_count;
             }
         }
@@ -452,13 +456,16 @@ fn dvr_pass(
 
     for (var k = 0u; k < KEYS_PER_THREAD; k += 1u) {
         atomicStore(&wg_warpHist[offsets[k]], keys[k]);
+        wg_payload[offsets[k]] = values[k];
     }
     workgroupBarrier();
 
     if (wgid.x < info.thread_blocks - 1u) {
         var i = threadid.x;
         for (var k = 0u; k < KEYS_PER_THREAD; k += 1u) {
-            alt[wg_localHist[(atomicLoad(&wg_warpHist[i]) >> info.shift) & RADIX_MASK] + i] = atomicLoad(&wg_warpHist[i]);
+            let offset = wg_localHist[(atomicLoad(&wg_warpHist[i]) >> info.shift) & RADIX_MASK] + i;
+            alt[offset] = atomicLoad(&wg_warpHist[i]);
+            alt_payload[offset] = wg_payload[i];
             i += BLOCK_DIM;
         }
     }
@@ -466,7 +473,9 @@ fn dvr_pass(
     if (wgid.x == info.thread_blocks - 1u) {
         let final_size = info.size - wgid.x * PART_SIZE;
         for (var i = threadid.x; i < final_size; i += BLOCK_DIM) {
-            alt[wg_localHist[(atomicLoad(&wg_warpHist[i]) >> info.shift) & RADIX_MASK] + i] = atomicLoad(&wg_warpHist[i]);
+            let offset = wg_localHist[(atomicLoad(&wg_warpHist[i]) >> info.shift) & RADIX_MASK] + i;
+            alt[offset] = atomicLoad(&wg_warpHist[i]);
+            alt_payload[offset] = wg_payload[i];
         }
     }
 }

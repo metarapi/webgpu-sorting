@@ -32,12 +32,19 @@ export function generateTestData(count, seed = Math.random() * 0xFFFFFFFF) {
 export function validateSort(data) {
   let errors = 0;
   let firstError = -1;
+  let zeroCount = 0;
   
-  for (let i = 1; i < data.length; i++) {
-    if (data[i - 1].key > data[i].key) {
-      errors++;
-      if (firstError === -1) {
-        firstError = i;
+  if (data.length > 0) {
+    if (data[0].key === 0) zeroCount++;
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i].key === 0) zeroCount++;
+      
+      if (data[i - 1].key > data[i].key) {
+        errors++;
+        if (firstError === -1) {
+          firstError = i;
+        }
       }
     }
   }
@@ -45,7 +52,8 @@ export function validateSort(data) {
   return {
     isSorted: errors === 0,
     errors,
-    firstError
+    firstError,
+    zeroCount
   };
 }
 
@@ -63,7 +71,7 @@ export function compareArrays(arr1, arr2) {
   let differences = 0;
   
   for (let i = 0; i < arr1.length; i++) {
-    if (arr1[i].key !== arr2[i].key) {
+    if (arr1[i].key !== arr2[i].key || arr1[i].value !== arr2[i].value) {
       differences++;
     }
   }

@@ -1,6 +1,6 @@
 # WebGPU Sorting Comparison
 
-A browser-based harness that validates and compares multiple GPU radix sort implementations in WGSL across vendors and architectures, with focus on subgroup behavior, memory ordering, and variant selection.
+A [browser-based](https://metarapi.github.io/webgpu-sorting/) harness that validates and compares multiple GPU radix sort implementations in WGSL across vendors and architectures, with focus on subgroup behavior, memory ordering, and variant selection.
 
 ## What’s inside
 

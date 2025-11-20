@@ -299,7 +299,11 @@ export class OneSweep {
     if (this.timingSupported) {
       await this.readBuffer.mapAsync(GPUMapMode.READ);
       const times = new BigUint64Array(this.readBuffer.getMappedRange());
-      gpuTime = Number(times[1] - times[0]) / 1000000; // Convert to milliseconds
+      const start = times[0];
+      const end = times[1];
+      const delta = Number(end - start);
+      console.log(`[OneSweep] Raw timestamps: start=${start}, end=${end}, delta=${delta}ns`);
+      gpuTime = delta / 1_000_000; // Convert to milliseconds
       this.readBuffer.unmap();
     }
 
