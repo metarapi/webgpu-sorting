@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 tmp/
+chatmodes/
 
 # Editor directories and files
 src/shaders/onesweep/*

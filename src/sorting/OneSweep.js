@@ -2,7 +2,6 @@
  * OneSweep - WebGPU Implementation
  * Based on Thomas Smith's GPUSorting library
  */
-import shader8 from '../shaders/onesweep/OneSweep8.wgsl?raw';
 import shader16 from '../shaders/onesweep/OneSweep16.wgsl?raw';
 import shader32 from '../shaders/onesweep/OneSweep32.wgsl?raw';
 import shader64 from '../shaders/onesweep/OneSweep64.wgsl?raw';
@@ -21,10 +20,9 @@ export class OneSweep {
   static STATUS_ERROR_COUNT = 3; // Keep in sync with STATUS_ERR_* constants in the shader
   static STATUS_LENGTH = OneSweep.STATUS_ERROR_COUNT;
 
-  constructor(device, maxKeys, forceSimd8 = false) {
+  constructor(device, maxKeys) {
     this.device = device;
     this.maxKeys = maxKeys;
-    this.forceSimd8 = !!forceSimd8;
     this.pipelines = null;
     this.buffers = null;
     this.bindGroupLayout = null;
@@ -41,10 +39,6 @@ export class OneSweep {
 
   async init() {
     let subgroupSize = await this.detectSubgroupSize();
-    if (this.forceSimd8) {
-      console.info('OneSweep: forcing SIMD8 variant (user request).');
-      subgroupSize = 8;
-    }
     const { shaderSource, label, blockDim = OneSweep.BLOCK_DIM, reduceBlockDim = OneSweep.REDUCE_BLOCK_DIM } = this.selectShaderVariant(subgroupSize);
     this.shaderVariantLabel = label;
     this.blockDim = blockDim;
@@ -378,8 +372,8 @@ export class OneSweep {
     if (size >= 16) {
       return { shaderSource: shader16, label: 'wave16', blockDim: 256, reduceBlockDim: 128 };
     }
-    // Fallback / SIMD8
-    return { shaderSource: shader8, label: 'wave8', blockDim: 128, reduceBlockDim: 64 };
+    console.warn(`OneSweep: detected subgroup size ${size}, which is below the supported minimum (16). Forcing the wave16 variant; execution may fail.`);
+    return { shaderSource: shader16, label: 'wave16 (forced)', blockDim: 256, reduceBlockDim: 128 };
   }
 
   async detectSubgroupSize() {

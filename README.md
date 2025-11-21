@@ -10,7 +10,7 @@ A [browser-based](https://metarapi.github.io/webgpu-sorting/) harness that valid
 
 ## Purpose
 
-- Verify correctness and portability of subgroup operations (ballot, shuffle, broadcasts) across 16/32/64 and potentially 8-wide subgroups.
+- Verify correctness and portability of subgroup operations (ballot, shuffle, broadcasts) across 16/32/64 subgroups.
 - Exercise memory-ordering and forward progress assumptions required by decoupled-lookback scans and chained-scan style algorithms.
 - Provide fallbacks and variant selection when device subgroup behavior differs between runs or pipelines.
 
@@ -38,17 +38,9 @@ A [browser-based](https://metarapi.github.io/webgpu-sorting/) harness that valid
 
 The app detects the supported subgroup range using adapter info and device limits (min/max subgroup size) and records the effective subgroup size per dispatch.
 
-OneSweep ships dedicated variants for 16, 32, and 64 lanes, and the ballot logic in WLMS is implemented with vec4<u32> ballots to cover 8–64 lanes robustly.
+OneSweep ships dedicated variants for 16, 32, and 64 lanes. The ballot logic in WLMS remains subgroup-agnostic, but the implementation requires at least 16 lanes.
 
-On Intel Arc, pipelines may compile to SIMD8 or SIMD16 depending on heuristics; a wave8-compatible configuration or variant selection is required for reliable runs.
-
-## Wave8 guidance (Intel)
-
-If a pipeline runs at subgroup_size=8, per-subgroup histogram capacity scales as (BLOCK_DIM / subgroup_size) × RADIX, which can exceed a 16-specialized capacity if not adjusted.
-
-Provide a wave8 variant for DeviceRadixSort/OneSweep by reducing the pass workgroup size (e.g., BLOCK_DIM=128) so WARP_HIST_CAPACITY matches the required histogram bins at wave8.
-
-Keep reduce/global-hist workgroups at sizes that remain divisible by lane_count while sizing shared arrays with MIN_SUBGROUP_SIZE=8 in the wave8 build.
+Hardware that reports subgroup sizes below 16 (for example, SIMD8-only GPUs) is not supported; the UI surfaces a warning, and the kernels may fail to execute correctly on those devices.
 
 ## Running locally
 

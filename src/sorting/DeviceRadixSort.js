@@ -4,7 +4,6 @@
  */
 
 import shader from '../shaders/deviceradix/DeviceRadixSort.wgsl?raw';
-import shader8 from '../shaders/deviceradix/DeviceRadixSort8.wgsl?raw';
 
 export class DeviceRadixSort {
   static SORT_PASSES = 4;
@@ -21,23 +20,22 @@ export class DeviceRadixSort {
   static STATUS_STAGE_NAMES = ['reduce_hist', 'scan', 'dvr_pass'];
   static STATUS_LENGTH = DeviceRadixSort.STATUS_ERROR_COUNT + DeviceRadixSort.SORT_PASSES * DeviceRadixSort.STATUS_STAGE_COUNT;
 
-  constructor(device, maxKeys, forceSimd8 = false) {
+  constructor(device, maxKeys) {
     this.device = device;
     this.maxKeys = maxKeys;
-    this.forceSimd8 = !!forceSimd8;
     this.pipelines = null;
     this.buffers = null;
     this.bindGroupLayout = null;
     this.timingSupported = device.features.has('timestamp-query');
 
     // Instance-specific workgroup configuration
-    this.blockDim = this.forceSimd8 ? 128 : DeviceRadixSort.BLOCK_DIM;
+    this.blockDim = DeviceRadixSort.BLOCK_DIM;
     this.partSize = this.blockDim * DeviceRadixSort.KEYS_PER_THREAD;
-    this.shaderSource = this.forceSimd8 ? shader8 : shader;
+    this.shaderSource = shader;
   }
 
   async init() {
-    // Create shader module (choose SIMD8 variant when requested)
+    // Create shader module
     const shaderModule = this.device.createShaderModule({ code: this.shaderSource });
 
     // Create bind group layout
