@@ -44,6 +44,15 @@ async function init() {
             <option value="onesweep">OneSweep Only</option>
             <option value="javascript">JavaScript Only</option>
           </select>
+          <div class="flex items-center mt-3">
+            <label class="inline-flex items-center cursor-pointer">
+              <input id="force-simd8" type="checkbox" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-700 rounded-full peer-checked:bg-blue-600 transition-colors relative" id="force-simd8-track">
+                <div id="force-simd8-knob" class="absolute left-1 top-1 bg-white w-4 h-4 rounded-full transform translate-x-0 transition-transform duration-200 ease-in-out"></div>
+              </div>
+              <span class="ml-3 text-sm font-medium text-gray-300">Force SIMD8</span>
+            </label>
+          </div>
         </div>
         <!-- Array Size -->
         <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
@@ -128,12 +137,7 @@ async function initWebGPU() {
     const maxKeys = 10000000; // 10M elements max
     fidelityFXSort = new FidelityFXSort(device, maxKeys);
     await fidelityFXSort.init();
-    
-    deviceRadixSort = new DeviceRadixSort(device, maxKeys);
-    await deviceRadixSort.init();
-    
-    oneSweep = new OneSweep(device, maxKeys);
-    await oneSweep.init();
+    // DeviceRadixSort and OneSweep will be initialized on-demand when running tests
 
     let adapterInfo = null;
     try {
@@ -191,6 +195,36 @@ function setupEventListeners() {
   const runButton = document.getElementById('run-sort');
   const algorithmSelect = document.getElementById('algorithm-select');
   const arraySizeInput = document.getElementById('array-size');
+  const forceSimd8Checkbox = document.getElementById('force-simd8');
+
+  // Ensure the toggle knob moves even if Tailwind's peer utilities aren't present
+  const forceKnob = document.getElementById('force-simd8-knob');
+  const forceTrack = document.getElementById('force-simd8-track');
+  const forceLabel = forceSimd8Checkbox ? forceSimd8Checkbox.closest('label')?.querySelector('span') : null;
+  if (forceSimd8Checkbox && forceKnob) {
+    const updateKnob = () => {
+      if (forceSimd8Checkbox.checked) {
+        forceKnob.classList.add('translate-x-5');
+        forceTrack.classList.remove('bg-gray-700');
+        forceTrack.classList.add('bg-blue-600');
+        if (forceLabel) {
+          forceLabel.classList.remove('text-gray-300', 'text-gray-400');
+          forceLabel.classList.add('text-white');
+        }
+      } else {
+        forceKnob.classList.remove('translate-x-5');
+        forceTrack.classList.remove('bg-blue-600');
+        forceTrack.classList.add('bg-gray-700');
+        if (forceLabel) {
+          forceLabel.classList.remove('text-white');
+          forceLabel.classList.add('text-gray-400');
+        }
+      }
+    };
+    forceSimd8Checkbox.addEventListener('change', updateKnob);
+    // initialize visual state
+    updateKnob();
+  }
 
   runButton.addEventListener('click', async () => {
     if (!device) {
@@ -200,22 +234,38 @@ function setupEventListeners() {
 
     const mode = algorithmSelect.value;
     const arraySize = parseInt(arraySizeInput.value);
+    const forceSimd8 = forceSimd8Checkbox?.checked === true;
 
     runButton.disabled = true;
     runButton.textContent = 'Running...';
 
-    await runSortingTest(mode, arraySize);
+    await runSortingTest(mode, arraySize, forceSimd8);
 
     runButton.disabled = false;
     runButton.textContent = 'Run Comparison';
   });
 }
 
-async function runSortingTest(mode, arraySize) {
+async function runSortingTest(mode, arraySize, forceSimd8 = false) {
   const resultsEl = document.getElementById('results');
   resultsEl.innerHTML = '<p class="text-blue-400">Generating test data...</p>';
 
   try {
+    const maxKeys = Math.max(arraySize, 1000000);
+
+    // Re-initialize DeviceRadixSort / OneSweep with the SIMD8 override when requested.
+    // We do this here so the checkbox applies at run-time.
+    if (mode === 'all' || mode === 'deviceradix') {
+      if (deviceRadixSort) deviceRadixSort.destroy();
+      deviceRadixSort = new DeviceRadixSort(device, maxKeys, forceSimd8);
+      await deviceRadixSort.init();
+    }
+    if (mode === 'all' || mode === 'onesweep') {
+      if (oneSweep) oneSweep.destroy();
+      oneSweep = new OneSweep(device, maxKeys, forceSimd8);
+      await oneSweep.init();
+    }
+
     // Generate test data
     const data = generateTestData(arraySize);
     

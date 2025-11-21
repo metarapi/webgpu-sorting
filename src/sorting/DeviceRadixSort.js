@@ -4,6 +4,7 @@
  */
 
 import shader from '../shaders/deviceradix/DeviceRadixSort.wgsl?raw';
+import shader8 from '../shaders/deviceradix/DeviceRadixSort8.wgsl?raw';
 
 export class DeviceRadixSort {
   static SORT_PASSES = 4;
@@ -20,18 +21,24 @@ export class DeviceRadixSort {
   static STATUS_STAGE_NAMES = ['reduce_hist', 'scan', 'dvr_pass'];
   static STATUS_LENGTH = DeviceRadixSort.STATUS_ERROR_COUNT + DeviceRadixSort.SORT_PASSES * DeviceRadixSort.STATUS_STAGE_COUNT;
 
-  constructor(device, maxKeys) {
+  constructor(device, maxKeys, forceSimd8 = false) {
     this.device = device;
     this.maxKeys = maxKeys;
+    this.forceSimd8 = !!forceSimd8;
     this.pipelines = null;
     this.buffers = null;
     this.bindGroupLayout = null;
     this.timingSupported = device.features.has('timestamp-query');
+
+    // Instance-specific workgroup configuration
+    this.blockDim = this.forceSimd8 ? 128 : DeviceRadixSort.BLOCK_DIM;
+    this.partSize = this.blockDim * DeviceRadixSort.KEYS_PER_THREAD;
+    this.shaderSource = this.forceSimd8 ? shader8 : shader;
   }
 
   async init() {
-    // Create shader module
-    const shaderModule = this.device.createShaderModule({ code: shader });
+    // Create shader module (choose SIMD8 variant when requested)
+    const shaderModule = this.device.createShaderModule({ code: this.shaderSource });
 
     // Create bind group layout
     this.bindGroupLayout = this.device.createBindGroupLayout({
@@ -77,7 +84,7 @@ export class DeviceRadixSort {
 
   createBuffers() {
     const keySize = Math.max(16, this.maxKeys * 4); // Minimum 16 bytes
-    const threadBlocks = Math.ceil(this.maxKeys / DeviceRadixSort.PART_SIZE);
+    const threadBlocks = Math.ceil(this.maxKeys / this.partSize);
 
     this.sortBuffer = this.device.createBuffer({
       size: keySize,
@@ -152,7 +159,7 @@ export class DeviceRadixSort {
     const numKeys = data.length;
     const keys = new Uint32Array(data.map(d => d.key));
     const values = new Uint32Array(data.map(d => d.value));
-    const threadBlocks = Math.ceil(numKeys / DeviceRadixSort.PART_SIZE);
+    const threadBlocks = Math.ceil(numKeys / this.partSize);
 
     // Upload data
     this.device.queue.writeBuffer(this.sortBuffer, 0, keys);

@@ -2,6 +2,7 @@
  * OneSweep - WebGPU Implementation
  * Based on Thomas Smith's GPUSorting library
  */
+import shader8 from '../shaders/onesweep/OneSweep8.wgsl?raw';
 import shader16 from '../shaders/onesweep/OneSweep16.wgsl?raw';
 import shader32 from '../shaders/onesweep/OneSweep32.wgsl?raw';
 import shader64 from '../shaders/onesweep/OneSweep64.wgsl?raw';
@@ -20,22 +21,37 @@ export class OneSweep {
   static STATUS_ERROR_COUNT = 3; // Keep in sync with STATUS_ERR_* constants in the shader
   static STATUS_LENGTH = OneSweep.STATUS_ERROR_COUNT;
 
-  constructor(device, maxKeys) {
+  constructor(device, maxKeys, forceSimd8 = false) {
     this.device = device;
     this.maxKeys = maxKeys;
+    this.forceSimd8 = !!forceSimd8;
     this.pipelines = null;
     this.buffers = null;
     this.bindGroupLayout = null;
     this.timingSupported = device.features.has('timestamp-query');
     this.subgroupSize = 0;
     this.shaderVariantLabel = '';
+
+    // instance defaults (may be overridden in init)
+    this.blockDim = OneSweep.BLOCK_DIM;
+    this.reduceBlockDim = OneSweep.REDUCE_BLOCK_DIM;
+    this.partSize = this.blockDim * OneSweep.KEYS_PER_THREAD;
+    this.reducePartSize = this.reduceBlockDim * OneSweep.REDUCE_KEYS_PER_THREAD;
   }
 
   async init() {
-    const subgroupSize = await this.detectSubgroupSize();
-    const { shaderSource, label } = this.selectShaderVariant(subgroupSize);
+    let subgroupSize = await this.detectSubgroupSize();
+    if (this.forceSimd8) {
+      console.info('OneSweep: forcing SIMD8 variant (user request).');
+      subgroupSize = 8;
+    }
+    const { shaderSource, label, blockDim = OneSweep.BLOCK_DIM, reduceBlockDim = OneSweep.REDUCE_BLOCK_DIM } = this.selectShaderVariant(subgroupSize);
     this.shaderVariantLabel = label;
-    console.info(`OneSweep: using ${label} shader variant (subgroup size ${subgroupSize}).`);
+    this.blockDim = blockDim;
+    this.reduceBlockDim = reduceBlockDim;
+    this.partSize = this.blockDim * OneSweep.KEYS_PER_THREAD;
+    this.reducePartSize = this.reduceBlockDim * OneSweep.REDUCE_KEYS_PER_THREAD;
+    console.info(`OneSweep: using ${label} shader variant (subgroup size ${subgroupSize}, blockDim ${this.blockDim}).`);
 
     // Create shader module
     const shaderModule = this.device.createShaderModule({
@@ -105,7 +121,7 @@ export class OneSweep {
     this.passHistBuffer?.destroy();
 
     const keySize = Math.max(16, this.maxKeys * 4); // Minimum 16 bytes
-    const threadBlocks = Math.ceil(this.maxKeys / OneSweep.PART_SIZE);
+    const threadBlocks = Math.ceil(this.maxKeys / this.partSize);
 
     this.sortBuffer = this.device.createBuffer({
       size: keySize,
@@ -187,7 +203,7 @@ export class OneSweep {
       this.createBuffers(); // Rebuild passHistBuffer sized for new threadBlocks
     }
 
-    const threadBlocks = Math.ceil(numKeys / OneSweep.PART_SIZE);
+    const threadBlocks = Math.ceil(numKeys / this.partSize);
 
     // Upload data
     this.device.queue.writeBuffer(this.sortBuffer, 0, keys);
@@ -260,7 +276,7 @@ export class OneSweep {
         const globalHistPass = encoder.beginComputePass(globalHistPassDesc);
         globalHistPass.setPipeline(this.pipelines.globalHist);
         globalHistPass.setBindGroup(0, bindGroup);
-        const globalHistThreadBlocks = Math.ceil(numKeys / OneSweep.REDUCE_PART_SIZE);
+        const globalHistThreadBlocks = Math.ceil(numKeys / this.reducePartSize);
         globalHistPass.dispatchWorkgroups(globalHistThreadBlocks);
         globalHistPass.end();
       }
@@ -354,12 +370,16 @@ export class OneSweep {
 
   selectShaderVariant(size) {
     if (size >= 48) {
-      return { shaderSource: shader64, label: 'wave64' };
+      return { shaderSource: shader64, label: 'wave64', blockDim: 256, reduceBlockDim: 128 };
     }
     if (size >= 24) {
-      return { shaderSource: shader32, label: 'wave32' };
+      return { shaderSource: shader32, label: 'wave32', blockDim: 256, reduceBlockDim: 128 };
     }
-    return { shaderSource: shader16, label: 'wave16' };
+    if (size >= 16) {
+      return { shaderSource: shader16, label: 'wave16', blockDim: 256, reduceBlockDim: 128 };
+    }
+    // Fallback / SIMD8
+    return { shaderSource: shader8, label: 'wave8', blockDim: 128, reduceBlockDim: 64 };
   }
 
   async detectSubgroupSize() {
