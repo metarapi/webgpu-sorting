@@ -282,8 +282,29 @@ async function runSortingTest(mode, arraySize) {
     // Display results
     displayResults(results, arraySize);
   } catch (error) {
-    resultsEl.innerHTML = `<p class="text-red-400">Error: ${error.message}</p>`;
     console.error(error);
+    const raw = error && error.message ? error.message : String(error);
+
+    // Small helper to escape HTML when showing messages
+    const escapeHtml = (str) => str.replace(/[&<>\"'`]/g, (ch) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+      '`': '&#96;'
+    }[ch]));
+
+    // Condense known shader/status errors into a single simple explanation
+    let message = raw;
+    if (/DEAD0001/i.test(raw) || /0xdead0001/i.test(raw) ||
+        /DEAD0002/i.test(raw) || /0xdead0002/i.test(raw) ||
+        /DEAD0004/i.test(raw) || /0xdead0004/i.test(raw) ||
+        /warp hist capacity exceeded/i.test(raw)) {
+      message = 'GPU sort failed: the device reported a subgroup configuration smaller than expected (subgroup < 16). Reload the page or use hardware/drivers that support subgroup ≥ 16.';
+    }
+
+    resultsEl.innerHTML = `<div class="text-red-400 font-semibold">${escapeHtml(message)}</div>`;
   }
 }
 
